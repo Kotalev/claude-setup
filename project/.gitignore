@@ -1,0 +1,15 @@
+# IDE
+../.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor swap
+*.swp
+*.swo
+*~
+
+# Claude runtime
+memory/
