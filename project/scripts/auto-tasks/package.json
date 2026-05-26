@@ -1,0 +1,13 @@
+{
+  "name": "auto-tasks-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local CLI backing the /auto-tasks slash command.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test __tests__/"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
