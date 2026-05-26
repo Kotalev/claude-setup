@@ -107,18 +107,6 @@ async function atomicClaim(rootDir, id, patch) {
   return loadTaskFromFile(rootDir, 'processing', task.filename);
 }
 
-async function moveToArchive(rootDir, id, patch) {
-  const task = await readTask(rootDir, id);
-  if (!task) throw new Error(`task not found: ${id}`);
-  const srcPath = task.path;
-  const dstPath = path.join(rootDir, 'archive', task.filename);
-  await fs.mkdir(path.join(rootDir, 'archive'), { recursive: true });
-  await fs.rename(srcPath, dstPath);
-  const updatedFm = { ...task.frontmatter, ...patch };
-  await fs.writeFile(dstPath, serializeTaskFile(updatedFm, task.body));
-  return loadTaskFromFile(rootDir, 'archive', task.filename);
-}
-
 async function moveToInbox(rootDir, id, patch = {}) {
   const task = await readTask(rootDir, id);
   if (!task) throw new Error(`task not found: ${id}`);
@@ -158,5 +146,5 @@ async function transitionStatusInPlace(rootDir, id, { fromStatus, patch }) {
 }
 
 module.exports = {
-  listTasks, readTask, writeTask, atomicClaim, moveToArchive, moveToInbox, markFailed, transitionStatusInPlace,
+  listTasks, readTask, writeTask, atomicClaim, moveToInbox, markFailed, transitionStatusInPlace,
 };

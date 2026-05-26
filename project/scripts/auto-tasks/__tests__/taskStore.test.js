@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { listTasks, readTask, writeTask, atomicClaim, moveToArchive, markFailed, transitionStatusInPlace } = require('../lib/taskStore');
+const { listTasks, readTask, writeTask, atomicClaim, markFailed, transitionStatusInPlace } = require('../lib/taskStore');
 const { serializeTaskFile } = require('../lib/frontmatter');
 
 let tmp;
@@ -85,17 +85,6 @@ test('atomicClaim — returns null when task is not in for_dev', async () => {
   const t = await readTask(tmp, '2026-04-17-001');
   assert.equal(t.dir, 'inbox');
   assert.equal(t.frontmatter.status, 'new');
-});
-
-test('moveToArchive — moves processing → archive with patch', async () => {
-  await seed('processing', '2026-04-17-001', 'foo', { status: 'processing' });
-  const archived = await moveToArchive(tmp, '2026-04-17-001', { status: 'done', review_score: 8 });
-  assert.equal(archived.dir, 'archive');
-  assert.equal(archived.frontmatter.status, 'done');
-  assert.equal(archived.frontmatter.review_score, 8);
-
-  const procEntries = await fs.readdir(path.join(tmp, 'processing'));
-  assert.equal(procEntries.length, 0);
 });
 
 test('markFailed — keeps in processing with status:failed + last_error', async () => {

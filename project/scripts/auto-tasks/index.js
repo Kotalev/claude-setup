@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const path = require('node:path');
 const {
-  listTasks, readTask, writeTask, atomicClaim, moveToArchive, moveToInbox, markFailed, transitionStatusInPlace,
+  listTasks, readTask, writeTask, atomicClaim, moveToInbox, markFailed, transitionStatusInPlace,
 } = require('./lib/taskStore');
 const { nextId } = require('./lib/idGenerator');
 const { slugify, serializeTaskFile } = require('./lib/frontmatter');
@@ -112,18 +112,6 @@ async function cmdClaim(args) {
   const patch = { status: 'processing', worktree, branch, updated_at: now };
   const task = await atomicClaim(tasksRoot(args), id, patch);
   print(task ? { claimed: true, task } : { claimed: false });
-}
-
-async function cmdArchive(args) {
-  const { id } = args;
-  if (!id) throw new Error('--id required');
-  const score = args['review-score'] != null ? parseInt(args['review-score'], 10) : null;
-  await moveToArchive(tasksRoot(args), id, {
-    status: 'done',
-    review_score: score,
-    updated_at: new Date().toISOString(),
-  });
-  print({ id });
 }
 
 async function cmdCompleteDev(args) {
@@ -368,7 +356,6 @@ const commands = {
   'verify-claim': cmdVerifyClaim,
   'verify-complete': cmdVerifyComplete,
   'migrate-fields': cmdMigrateFields,
-  'archive': cmdArchive,
   'fail': cmdFail,
   'retry': cmdRetry,
   'approve': cmdApprove,

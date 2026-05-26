@@ -66,7 +66,7 @@ test('CLI approve — flips new → for_dev', async () => {
   assert.match(content, /status: for_dev/);
 });
 
-test('CLI claim + archive — end-to-end', async () => {
+test('CLI claim — moves task to processing', async () => {
   const payload = { title: 'T', body: '## Context\n', status: 'for_dev' };
   const payloadPath = path.join(tmp, 'p.json');
   await fs.writeFile(payloadPath, JSON.stringify(payload));
@@ -76,11 +76,8 @@ test('CLI claim + archive — end-to-end', async () => {
   assert.equal(claim.claimed, true);
   assert.equal(claim.task.frontmatter.status, 'processing');
 
-  const archived = run(['archive', '--id', created.id, '--review-score', '8']);
-  assert.equal(archived.id, created.id);
-  const archivePath = path.join(tmp, 'tasks', 'archive');
-  const entries = await fs.readdir(archivePath);
-  assert.equal(entries.length, 1);
+  const proc = await fs.readdir(path.join(tmp, 'tasks', 'processing'));
+  assert.equal(proc.length, 1);
 });
 
 test('CLI group-candidates — groups by file overlap', async () => {
