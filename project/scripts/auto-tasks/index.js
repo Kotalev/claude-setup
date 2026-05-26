@@ -294,7 +294,8 @@ async function cmdAppendCriterion(args) {
 async function cmdGroupCandidates(args) {
   if (!args.json) throw new Error('--json required');
   const cands = JSON.parse(await fs.readFile(args.json, 'utf8'));
-  print(groupCandidates(cands));
+  const { moduleRoots } = await loadConfig(tasksRoot(args));
+  print(groupCandidates(cands, moduleRoots));
 }
 
 function extractFilesFromBody(body) {
@@ -313,14 +314,15 @@ function extractFilesFromBody(body) {
 async function cmdFindRelated(args) {
   if (!args.json) throw new Error('--json required');
   const input = JSON.parse(await fs.readFile(args.json, 'utf8'));
+  const { moduleRoots } = await loadConfig(tasksRoot(args));
   const inputFiles = new Set(input.files || []);
-  const inputModules = new Set([...inputFiles].map(detectModule).filter(Boolean));
+  const inputModules = new Set([...inputFiles].map((f) => detectModule(f, moduleRoots)).filter(Boolean));
   const tasks = await listTasks(tasksRoot(args));
   const matches = [];
   for (const t of tasks) {
     if (!['new', 'for_dev'].includes(t.frontmatter.status)) continue;
     const taskFiles = extractFilesFromBody(t.body);
-    const taskModules = new Set(taskFiles.map(detectModule).filter(Boolean));
+    const taskModules = new Set(taskFiles.map((f) => detectModule(f, moduleRoots)).filter(Boolean));
     const overlapFiles = taskFiles.filter((f) => inputFiles.has(f));
     const overlapModules = [...taskModules].filter((m) => inputModules.has(m));
     if (overlapFiles.length > 0 || overlapModules.length > 0) {
