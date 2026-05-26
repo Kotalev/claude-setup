@@ -2,22 +2,22 @@
 
 Manage the autonomous task queue at `tasks/` backed by the Node CLI at `scripts/auto-tasks/index.js`. State lives in per-task markdown files with YAML frontmatter. All destructive actions go through the CLI — never hand-edit task files from this command.
 
-All project-specific behavior (package manager, app start commands, ports, verify mode, project rules, cron schedules) is read from `tasks/auto-tasks.config.json` via `node scripts/auto-tasks/index.js config` (prints normalized JSON with defaults applied). **Run `/auto-tasks install` once before anything else** to generate this config — `run` and `verify` assume it exists.
+All project-specific behavior (package manager, app start commands, ports, verify mode, project rules) is read from `tasks/auto-tasks.config.json` via `node scripts/auto-tasks/index.js config` (prints normalized JSON with defaults applied). **Run `/auto-tasks install` once before anything else** to generate this config — `run` and `verify` assume it exists.
 
 ## Arguments
 
 `$ARGUMENTS` — first token is the subcommand; the rest is subcommand-specific.
 
 Subcommands:
-- `install` — detect the project stack, write `tasks/auto-tasks.config.json` interactively, and install the crons (one-time setup; run this first)
+- `install` — detect the project stack and write `tasks/auto-tasks.config.json` interactively (one-time setup; run this first)
 - `new` — create one task interactively
 - `new "<description>"` — create one task from a short description
 - `new --from <path>` — ingest many tasks from a document
 - `approve <id...>` — flip one or more tasks from `new` to `for_dev`
 - `list` — print a status summary
 - `status <id>` — show details of one task
-- `run` — claim all `for_dev` tasks and dispatch work (used by cron and manual)
-- `verify` — claim one `awaiting_verification` task, start the apps declared in `config.verify.apps`, verify against Chrome DevTools MCP, decide `verified` (→ archive) or `not_verified` (used by cron and manual)
+- `run` — claim all `for_dev` tasks and dispatch work
+- `verify` — claim one `awaiting_verification` task, start the apps declared in `config.verify.apps`, verify against Chrome DevTools MCP, decide `verified` (→ archive) or `not_verified`
 - `retry <id>` — flip a `failed` task back to `for_dev`
 - `cleanup` — remove tasks (from `archive/` or `processing/`) that are manually marked `status: commited` or `status: committed`, and remove their git worktrees
 
@@ -25,7 +25,7 @@ Subcommands:
 
 ### Subcommand: `install`
 
-One-time interactive setup. Detects the project's tech stack, asks the user about anything unclear, writes `tasks/auto-tasks.config.json` (committed), and installs the crons. Re-running is safe — it overwrites the config and skips crons that already exist.
+One-time interactive setup. Detects the project's tech stack, asks the user about anything unclear, and writes `tasks/auto-tasks.config.json` (committed). Re-running is safe — it overwrites the config.
 
 1. **Detect package manager.** Check the repo root for a lockfile: `pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `bun.lockb` → `bun`, `package-lock.json` → `npm`. If none, default `npm` and confirm via `AskUserQuestion`.
 2. **Detect workspace layout.** Look for `pnpm-workspace.yaml` or `package.json#workspaces`. Collect candidate app directories (`apps/*` and any workspace globs). Build a `moduleRoots` proposal from the layout (e.g. `["apps/*/src/*", "packages/*/src/*"]`); if it's a single-package repo, propose `["src/*"]` or leave empty.
@@ -36,8 +36,7 @@ One-time interactive setup. Detects the project's tech stack, asks the user abou
 4. **Confirm the apps.** Present the inferred `verify.apps` array. For each unclear field, ask with `AskUserQuestion` (one decision per prompt): which apps to start, their ports, start commands, which app is the browser base URL. Let the user drop apps that shouldn't run during verify.
 5. **Verify mode.** `AskUserQuestion`: `worktree` (default — start apps from the isolated worktree on the config ports; main repo untouched) vs `checkout` (check out the feature branch in the main repo, run there, then restore — requires a clean working tree).
 6. **Project rules.** List `.claude/rules/*.md`. `AskUserQuestion` (multiSelect) which to inject into the dev agent's prompt as `projectRules` (or none).
-7. **Cron schedules.** `AskUserQuestion` for `cron.run` (default `7 * * * *`) and `cron.verify` (default `*/10 * * * *`). Offer the defaults as the first option.
-8. **Write the config.** Build the payload and persist it through the CLI (validates the schema):
+7. **Write the config.** Build the payload and persist it through the CLI (validates the schema):
    ```bash
    cat > /tmp/at-config.json <<'EOF'
    { ...assembled config... }
@@ -45,16 +44,12 @@ One-time interactive setup. Detects the project's tech stack, asks the user abou
    node scripts/auto-tasks/index.js config --set /tmp/at-config.json
    rm /tmp/at-config.json
    ```
-   Print the saved path. On a validation error, surface it and re-ask the offending field.
-9. **Start the process (install crons).** `AskUserQuestion` `[install crons / skip]`. On `install crons`, for each schedule whose id-file does not already exist:
-   - `CronCreate` with `cron: <config.cron.run>`, `prompt: "/auto-tasks run"`, `recurring: true`, `durable: false` → save id to `tasks/.cron-id`.
-   - `CronCreate` with `cron: <config.cron.verify>`, `prompt: "/auto-tasks verify"`, `recurring: true`, `durable: false` → save id to `tasks/.cron-id-verify`.
-   Print both cron ids (or "already installed"). To remove crons later, use `CronList`/`CronDelete` manually with the saved ids.
+   Print the saved path. On a validation error, surface it and re-ask the offending field. Once written, `run` and `verify` can be invoked manually with `/auto-tasks run` / `/auto-tasks verify`.
 
 ### Subcommand: `new` (no arguments)
 
 1. Ask the user for a title via `AskUserQuestion` (short input).
-2. Ask the user for a `test_url` via `AskUserQuestion` (short input). Prompt: *"Relative URL to open after dev is done (e.g. `/editor/<token>` or `/pdf/<token>`). Leave blank to skip verification — the task will land in `not_verified` and the verify cron won't pick it up."* Accept empty input as "skip".
+2. Ask the user for a `test_url` via `AskUserQuestion` (short input). Prompt: *"Specific relative URL to open during verification (the exact page that exercises this change). Leave blank and the verify agent will work out the right page itself from the task description."* Accept empty input — when blank, omit `test_url` so the CLI records `null`.
 3. Bash: `node scripts/auto-tasks/index.js next-id --date $(date -u +%Y-%m-%d)`. Parse the id from the JSON output.
 4. Bash: build the payload and create the task. Include `test_url` only when the user provided one (otherwise omit it so the CLI records `null`):
    ```bash
@@ -78,7 +73,7 @@ One-time interactive setup. Detects the project's tech stack, asks the user abou
 4. Bash: `node scripts/auto-tasks/index.js find-related --json /tmp/at-related.json`. Parse `matches`.
 5. If `matches` is non-empty, present an `AskUserQuestion` with options `[append <first_match_id> / new / cancel]`.
    - `append <id>` → Bash: `node scripts/auto-tasks/index.js append-criterion --id <id> --text "<short derived criterion>"`. Print confirmation.
-   - `new` or no matches → ask the user for a `test_url` via `AskUserQuestion` (same prompt as the interactive `new` flow — blank = skip verification). Then build the final payload (title, optional `test_url`, body with filled Context/AC/References) and Bash: `node scripts/auto-tasks/index.js create --json /tmp/at-new.json`.
+   - `new` or no matches → ask the user for a `test_url` via `AskUserQuestion` (same prompt as the interactive `new` flow — blank = verify agent finds the page itself). Then build the final payload (title, optional `test_url`, body with filled Context/AC/References) and Bash: `node scripts/auto-tasks/index.js create --json /tmp/at-new.json`.
    - `cancel` → abort, write nothing.
 6. Clean up tmp files.
 
@@ -105,7 +100,7 @@ One-time interactive setup. Detects the project's tech stack, asks the user abou
    Create <X> tasks from these <N> items? [yes / edit / separate all / cancel]
    ```
    Use `AskUserQuestion`. On `edit`, enter a loop where the user can regroup items until satisfied; or on `separate all`, skip grouping entirely; on `cancel`, abort.
-7. After the grouping is accepted, ask the user for a single default `test_url` via `AskUserQuestion`. Prompt: *"Default `test_url` to apply to ALL tasks created from this document (e.g. `/editor/<token>`). Leave blank to skip verification for all of them."* This is a batch prompt — do NOT ask per-task. If the user provides a value, include it in every payload; if blank, omit `test_url` (CLI stores `null` → verify cron skips).
+7. After the grouping is accepted, ask the user for a single default `test_url` via `AskUserQuestion`. Prompt: *"Default `test_url` to apply to ALL tasks created from this document — the specific page that exercises them. Leave blank and the verify agent will work out the right page per task."* This is a batch prompt — do NOT ask per-task. If the user provides a value, include it in every payload; if blank, omit `test_url` (CLI stores `null`).
 8. For each accepted group and standalone, build a payload and Bash: `node scripts/auto-tasks/index.js create --json /tmp/at-one.json`. Always include `source: "<path>"` in the payload; groups also include `merged_from: [...]`; the optional `test_url` from step 7 goes in every payload when provided.
 9. Print the list of created ids and a reminder that they are `status: new` and need `/auto-tasks approve`. If `test_url` was set, mention it so the user knows the batch is verification-eligible.
 
@@ -124,7 +119,7 @@ For each id in `$ARGUMENTS`:
 
 ### Subcommand: `run`
 
-This is the main autonomous loop. It must be fully non-interactive (cron runs with no user).
+This is the main autonomous loop. It must be fully non-interactive (it may run unattended).
 
 1. Record start time. Load config: `node scripts/auto-tasks/index.js config` → parse `install`, `test`, `worktree.{root,branchPrefix}`, `projectRules`, `reviewerAgent`.
 2. Bash: `node scripts/auto-tasks/index.js list --status for_dev`. Parse `tasks[]`.
@@ -134,7 +129,7 @@ This is the main autonomous loop. It must be fully non-interactive (cron runs wi
    node scripts/auto-tasks/index.js log-run --json /tmp/at-log.json
    ```
    Output: `No tasks in for_dev. Nothing to do.`.
-4. For each task, derive a slug from its filename (the CLI `list` output includes `id`; to get the full filename or slug, you can `ls tasks/inbox/` and match the id prefix). Claim sequentially — atomic rename guarantees no double-claim even if cron + manual overlap:
+4. For each task, derive a slug from its filename (the CLI `list` output includes `id`; to get the full filename or slug, you can `ls tasks/inbox/` and match the id prefix). Claim sequentially — atomic rename guarantees no double-claim even if runs overlap:
    ```bash
    node scripts/auto-tasks/index.js claim --id <id> --worktree "<config.worktree.root>/<slug>" --branch "<config.worktree.branchPrefix><slug>"
    ```
@@ -164,7 +159,7 @@ This is the main autonomous loop. It must be fully non-interactive (cron runs wi
    - Else: spawn another `Agent` (same subagent_type as the implementation agent) with the `required_changes` as instructions, cd'd into the worktree. When it returns, re-review.
    - After 3 failed cycles, Bash: `node scripts/auto-tasks/index.js fail --id <id> --error "review score stuck at <score> after 3 attempts"`. Continue.
 9. On success: Bash: `node scripts/auto-tasks/index.js complete-dev --id <id> --review-score <score>`.
-   The task stays in `processing/` with status `awaiting_verification` (if `test_url` is populated) or `not_verified` (if `test_url` is null). Archiving now happens only via the verify cron.
+   The task stays in `processing/` with status `awaiting_verification`. Archiving now happens only via `verify`.
 10. After all tasks finish, write the run log:
     ```bash
     echo '{"trigger":"run","picked":<N>,"done":<X>,"failed":<Y>,"duration_ms":<ms>}' > /tmp/at-log.json
@@ -175,7 +170,7 @@ This is the main autonomous loop. It must be fully non-interactive (cron runs wi
 
 ### Subcommand: `verify`
 
-This is the verification autonomous loop — runs every 10 min via cron. Fully non-interactive, idempotent, single-threaded.
+This is the verification loop. Fully non-interactive, idempotent, single-threaded.
 
 Apps run on the host (not Docker). The apps to start, their ports, start commands, and the verify mode all come from `config.verify` (`node scripts/auto-tasks/index.js config`). In `worktree` mode the apps start from the task's worktree on the config ports, so the main repo is never touched; in `checkout` mode the feature branch is checked out into the main repo (requires a clean tree) and restored afterwards.
 
@@ -219,9 +214,9 @@ Apps run on the host (not Docker). The apps to start, their ports, start command
 
 9. **Pre-warm the browser app.** Let `BROWSER_PORT` be the `port` of the app whose `name` equals `config.verify.browserApp` (fallback: the first app). `curl -fsS -o /dev/null "http://localhost:$BROWSER_PORT/" || true`, then `sleep 2`.
 
-10. **Dispatch a verification subagent** with `model: "opus"`, `subagent_type: "general-purpose"`. Prompt template:
+10. **Dispatch a verification subagent** with `model: "opus"`, `subagent_type: "general-purpose"`. If `task.frontmatter.test_url` is set, the start URL is `http://localhost:<BROWSER_PORT><test_url>`; if it is null, instruct the agent to work out the right page itself from the task. Prompt template:
 
-    > You are a verification agent. The application is running at `http://localhost:<BROWSER_PORT>` (the other apps in the config are reachable on their own ports). Navigate to `http://localhost:<BROWSER_PORT><task.frontmatter.test_url>` and execute the Repro Steps below. For each Acceptance Criterion, determine if it is met using chrome-devtools MCP tools (navigate_page, take_screenshot, take_snapshot, click, fill, list_console_messages, etc.).
+    > You are a verification agent. The application is running at `http://localhost:<BROWSER_PORT>` (the other apps in the config are reachable on their own ports). [If `test_url` is set: "Navigate to `http://localhost:<BROWSER_PORT><test_url>`." Else: "No specific URL was given — start from `http://localhost:<BROWSER_PORT>/` and navigate to whatever page exercises this task, inferring it from the Context, Acceptance Criteria, and References below."] Then execute the Repro Steps. For each Acceptance Criterion, determine if it is met using chrome-devtools MCP tools (navigate_page, take_screenshot, take_snapshot, click, fill, list_console_messages, etc.).
     >
     > Task:
     > `<full markdown body: Context, Acceptance Criteria, Repro Steps, References>`
@@ -279,7 +274,7 @@ Removes tasks that the user has manually marked as integrated — by setting `st
    ```
    Parse both `tasks[]` arrays and concatenate. Deduplicate by `id`.
 
-2. If the merged list is empty: print `No tasks with status 'commited'/'committed' to clean up.` and exit (do not write a run log — this subcommand is user-invoked, not cron).
+2. If the merged list is empty: print `No tasks with status 'commited'/'committed' to clean up.` and exit (do not write a run log — this subcommand is user-invoked).
 
 3. Build a preview and ask for confirmation. Print one line per task:
    ```

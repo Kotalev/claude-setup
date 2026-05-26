@@ -22,6 +22,4 @@ tasks/processing/*
 !tasks/processing/.gitkeep
 tasks/archive/*
 !tasks/archive/.gitkeep
-tasks/.cron-id
-tasks/.cron-id-verify
 tasks/.run-log.jsonl

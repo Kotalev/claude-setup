@@ -10,7 +10,6 @@ function baseDefaults() {
     moduleRoots: [],
     projectRules: [],
     reviewerAgent: 'elite-code-reviewer',
-    cron: { run: '7 * * * *', verify: '*/10 * * * *' },
     verify: { enabled: false, mode: 'worktree', envFile: '.env', browserApp: null, apps: [] },
   };
 }
@@ -31,7 +30,6 @@ function normalizeConfig(raw = {}) {
     moduleRoots: Array.isArray(r.moduleRoots) ? r.moduleRoots : d.moduleRoots,
     projectRules: Array.isArray(r.projectRules) ? r.projectRules : d.projectRules,
     reviewerAgent: r.reviewerAgent || d.reviewerAgent,
-    cron: { ...d.cron, ...obj(r.cron) },
     verify: {
       enabled: v.enabled !== undefined ? !!v.enabled : apps.length > 0,
       mode: v.mode || d.verify.mode,

@@ -105,14 +105,14 @@ test('CLI complete-dev — test_url populated → awaiting_verification', async 
   assert.match(content, /review_score: 8/);
 });
 
-test('CLI complete-dev — test_url null → not_verified', async () => {
+test('CLI complete-dev — test_url null → awaiting_verification (agent finds the link)', async () => {
   const file = '2026-04-17-031-x.md';
   await fs.writeFile(path.join(tmp, 'tasks', 'processing', file),
     '---\nid: 2026-04-17-031\ntitle: x\nstatus: processing\npriority: normal\ncreated_at: x\nupdated_at: x\nworktree: null\nbranch: null\nreview_score: null\nattempts: 0\nlast_error: null\nsource: null\nmerged_from: []\ntest_url: null\nverified_at: null\nverify_notes: null\n---\n\nbody\n');
   const out = run(['complete-dev', '--id', '2026-04-17-031', '--review-score', '9']);
-  assert.equal(out.status, 'not_verified');
+  assert.equal(out.status, 'awaiting_verification');
   const content = await fs.readFile(path.join(tmp, 'tasks', 'processing', file), 'utf8');
-  assert.match(content, /status: not_verified/);
+  assert.match(content, /status: awaiting_verification/);
 });
 
 test('CLI complete-dev — fails if task not in processing', async () => {

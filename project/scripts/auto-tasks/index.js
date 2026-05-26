@@ -124,14 +124,11 @@ async function cmdCompleteDev(args) {
   if (task.frontmatter.status !== 'processing') {
     throw new Error(`task ${id} is not in 'processing' (status: ${task.frontmatter.status})`);
   }
-  const hasTestUrl = task.frontmatter.test_url != null && String(task.frontmatter.test_url).trim() !== '';
-  const nextStatus = hasTestUrl ? 'awaiting_verification' : 'not_verified';
-  const patch = { status: nextStatus, review_score: score };
-  if (!hasTestUrl) {
-    patch.verify_notes = 'test_url not provided at approve time — skipped verification';
-  }
+  // Every completed task goes to verification. When test_url is set the verify
+  // agent opens it directly; when it's null the agent finds the right page itself.
+  const patch = { status: 'awaiting_verification', review_score: score };
   await transitionStatusInPlace(root, id, { fromStatus: 'processing', patch });
-  print({ id, status: nextStatus });
+  print({ id, status: 'awaiting_verification' });
 }
 
 async function cmdVerifyClaim(args) {
