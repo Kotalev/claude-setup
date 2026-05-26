@@ -13,3 +13,15 @@ Thumbs.db
 
 # Claude runtime
 memory/
+
+# Auto-task queue — task files are local-only; folders kept via .gitkeep.
+# tasks/auto-tasks.config.json is intentionally tracked (project setup, shared).
+tasks/inbox/*
+!tasks/inbox/.gitkeep
+tasks/processing/*
+!tasks/processing/.gitkeep
+tasks/archive/*
+!tasks/archive/.gitkeep
+tasks/.cron-id
+tasks/.cron-id-verify
+tasks/.run-log.jsonl
