@@ -258,13 +258,15 @@ Apps run on the host (not Docker). The apps to start, their ports, start command
 
 ### Subcommand: `retry <id>`
 
-1. Bash: `node scripts/auto-tasks/index.js retry --id <id>`.
-2. If `.claude/worktrees/<slug>` exists, remove it so the next run starts fresh:
+1. Capture the task's `worktree` and `branch` **before** retrying — the CLI nulls them on `retry`: `node scripts/auto-tasks/index.js list` and read those two fields off the entry for `<id>`.
+2. Bash: `node scripts/auto-tasks/index.js retry --id <id>`.
+3. If the captured `worktree` is non-null, remove that worktree and its branch so the next run starts fresh (use the captured values, not hardcoded paths — they honor whatever `config.worktree.{root,branchPrefix}` produced):
    ```bash
-   git worktree remove .claude/worktrees/<slug> --force 2>/dev/null || true
-   git branch -D feature/<slug> 2>/dev/null || true
+   WT="<captured worktree — prepend repo root if relative>"
+   [ -d "$WT" ] && git worktree remove "$WT" --force 2>/dev/null || true
+   git branch -D "<captured branch>" 2>/dev/null || true
    ```
-3. Print confirmation.
+4. Print confirmation.
 
 ### Subcommand: `cleanup`
 

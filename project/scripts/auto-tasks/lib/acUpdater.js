@@ -5,9 +5,11 @@ function escapeRegex(s) {
 function markAC(body, acText, passed) {
   const trimmed = acText.trim();
   if (!trimmed) return body;
-  const marker = passed ? '- [x]' : '- [ ]';
-  const re = new RegExp(`- \\[[ x]\\]\\s+${escapeRegex(trimmed)}(?=\\s|$)`, 'gm');
-  return body.replace(re, `${marker} ${trimmed}`);
+  const box = passed ? '[x]' : '[ ]';
+  // Anchor to the whole line so an AC that is a prefix of another (e.g. "Save"
+  // vs "Save document") doesn't get ticked by mistake.
+  const re = new RegExp(`^(- )\\[[ x]\\]([ \\t]+${escapeRegex(trimmed)})[ \\t]*$`, 'gm');
+  return body.replace(re, `$1${box}$2`);
 }
 
 function markACs(body, acs) {

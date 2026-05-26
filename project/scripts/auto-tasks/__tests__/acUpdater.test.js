@@ -39,6 +39,13 @@ test('markAC — only ticks the matching AC, leaves others alone', () => {
   assert.match(out, /- \[ \] A\n- \[x\] AB\n- \[ \] ABC/);
 });
 
+test('markAC — does not tick a longer AC that starts with the same words', () => {
+  const body = '- [ ] Save\n- [ ] Save document\n';
+  const out = markAC(body, 'Save', true);
+  assert.match(out, /- \[x\] Save\n/);
+  assert.match(out, /- \[ \] Save document/);
+});
+
 const { markACs } = require('../lib/acUpdater');
 
 test('markACs — applies multiple AC updates sequentially', () => {

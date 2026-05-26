@@ -6,8 +6,8 @@ Drop problems here, approve them, let Claude Code work on them in isolated workt
 
 | Directory | Contents |
 |---|---|
-| `inbox/` | Tasks with status `new`, `for_dev`, or `failed`. Local-only (gitignored). |
-| `processing/` | Tasks currently being worked on (status `processing`, `awaiting_verification`, `verifying`, or `not_verified`). Local-only (gitignored). A task's presence here is the atomic lock. |
+| `inbox/` | Tasks with status `new` or `for_dev`. Local-only (gitignored). |
+| `processing/` | Tasks currently being worked on (status `processing`, `awaiting_verification`, `verifying`, `not_verified`, or `failed`). Local-only (gitignored). A task's presence here is the atomic lock. |
 | `archive/` | Tasks with status `verified`. Local-only (gitignored). |
 
 Task files are **local-only** — each developer's queue lives on their own machine and is not committed. `auto-tasks.config.json` (the project setup written by `/auto-tasks install`) **is** committed and shared. `.run-log.jsonl`, `.cron-id`, and `.cron-id-verify` are gitignored runtime artifacts.
