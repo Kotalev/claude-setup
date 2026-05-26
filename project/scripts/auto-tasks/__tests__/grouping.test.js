@@ -2,11 +2,17 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { groupCandidates, detectModule, normalizeTopic } = require('../lib/grouping');
 
+const ROOTS = ['apps/*/src/*', 'packages/*/src/*'];
+
 test('detectModule — returns module root for known paths', () => {
-  assert.equal(detectModule('apps/web/src/components/TableView.tsx'), 'apps/web/src/components');
-  assert.equal(detectModule('apps/api/src/routes/tables.ts'), 'apps/api/src/routes');
-  assert.equal(detectModule('packages/db/src/schema/table_rows.ts'), 'packages/db/src/schema');
-  assert.equal(detectModule('README.md'), null);
+  assert.equal(detectModule('apps/web/src/components/TableView.tsx', ROOTS), 'apps/web/src/components');
+  assert.equal(detectModule('apps/api/src/routes/tables.ts', ROOTS), 'apps/api/src/routes');
+  assert.equal(detectModule('packages/db/src/schema/table_rows.ts', ROOTS), 'packages/db/src/schema');
+  assert.equal(detectModule('README.md', ROOTS), null);
+});
+
+test('detectModule — no moduleRoots returns null', () => {
+  assert.equal(detectModule('apps/web/src/components/TableView.tsx'), null);
 });
 
 test('groupCandidates — groups by shared file', () => {
@@ -29,7 +35,7 @@ test('groupCandidates — groups by shared module when no file overlap', () => {
     { title: 'B', files: ['apps/web/src/components/Bar.tsx'] },
     { title: 'C', files: ['apps/api/src/routes/tables.ts'] },
   ];
-  const { groups, standalone } = groupCandidates(cands);
+  const { groups, standalone } = groupCandidates(cands, ROOTS);
   assert.equal(groups.length, 1);
   assert.equal(groups[0].items.length, 2);
   assert.equal(groups[0].module, 'apps/web/src/components');

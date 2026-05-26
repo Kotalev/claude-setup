@@ -1,15 +1,11 @@
-const MODULE_PATTERNS = [
-  /^apps\/web\/src\/[^/]+/,
-  /^apps\/api\/src\/[^/]+/,
-  /^apps\/worker\/src\/[^/]+/,
-  /^packages\/db\/src\/[^/]+/,
-  /^packages\/ui\/src\/[^/]+/,
-  /^packages\/config\/[^/]+/,
-];
+function globToRegex(glob) {
+  const escaped = String(glob).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]+');
+  return new RegExp('^' + escaped);
+}
 
-function detectModule(filePath) {
-  for (const re of MODULE_PATTERNS) {
-    const m = filePath.match(re);
+function detectModule(filePath, moduleRoots = []) {
+  for (const g of moduleRoots) {
+    const m = String(filePath).match(globToRegex(g));
     if (m) return m[0];
   }
   return null;
@@ -20,7 +16,7 @@ function normalizeTopic(t) {
   return t.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 }
 
-function groupCandidates(candidates) {
+function groupCandidates(candidates, moduleRoots = []) {
   const n = candidates.length;
   if (n === 0) return { groups: [], standalone: [] };
 
@@ -28,7 +24,7 @@ function groupCandidates(candidates) {
   const meta = candidates.map((c) => {
     const modules = new Set();
     for (const f of c.files || []) {
-      const m = detectModule(f);
+      const m = detectModule(f, moduleRoots);
       if (m) modules.add(m);
     }
     return {
