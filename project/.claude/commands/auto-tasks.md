@@ -2,11 +2,14 @@
 
 Manage the autonomous task queue at `tasks/` backed by the Node CLI at `scripts/auto-tasks/index.js`. State lives in per-task markdown files with YAML frontmatter. All destructive actions go through the CLI — never hand-edit task files from this command.
 
+All project-specific behavior (package manager, app start commands, ports, verify mode, project rules, cron schedules) is read from `tasks/auto-tasks.config.json` via `node scripts/auto-tasks/index.js config` (prints normalized JSON with defaults applied). **Run `/auto-tasks install` once before anything else** to generate this config — `run` and `verify` assume it exists.
+
 ## Arguments
 
 `$ARGUMENTS` — first token is the subcommand; the rest is subcommand-specific.
 
 Subcommands:
+- `install` — detect the project stack, write `tasks/auto-tasks.config.json` interactively, and install the crons (one-time setup; run this first)
 - `new` — create one task interactively
 - `new "<description>"` — create one task from a short description
 - `new --from <path>` — ingest many tasks from a document
@@ -15,13 +18,39 @@ Subcommands:
 - `list` — print a status summary
 - `status <id>` — show details of one task
 - `run` — claim all `for_dev` tasks and dispatch work (used by cron and manual)
-- `verify` — claim one `awaiting_verification` task, start `apps/api` (:4101) and `apps/web` (:4100) from its worktree, verify against Chrome DevTools MCP, decide `verified` (→ archive) or `not_verified` (used by cron and manual)
+- `verify` — claim one `awaiting_verification` task, start the apps declared in `config.verify.apps`, verify against Chrome DevTools MCP, decide `verified` (→ archive) or `not_verified` (used by cron and manual)
 - `retry <id>` — flip a `failed` task back to `for_dev`
 - `cleanup` — remove tasks (from `archive/` or `processing/`) that are manually marked `status: commited` or `status: committed`, and remove their git worktrees
-- `install-cron` — register the hourly cron once
-- `uninstall-cron` — unregister the cron
 
 ## Process
+
+### Subcommand: `install`
+
+One-time interactive setup. Detects the project's tech stack, asks the user about anything unclear, writes `tasks/auto-tasks.config.json` (committed), and installs the crons. Re-running is safe — it overwrites the config and skips crons that already exist.
+
+1. **Detect package manager.** Check the repo root for a lockfile: `pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `bun.lockb` → `bun`, `package-lock.json` → `npm`. If none, default `npm` and confirm via `AskUserQuestion`.
+2. **Detect workspace layout.** Look for `pnpm-workspace.yaml` or `package.json#workspaces`. Collect candidate app directories (`apps/*` and any workspace globs). Build a `moduleRoots` proposal from the layout (e.g. `["apps/*/src/*", "packages/*/src/*"]`); if it's a single-package repo, propose `["src/*"]` or leave empty.
+3. **Infer apps to run for verification.** For each candidate app, Read its `package.json`:
+   - Framework from deps: `next` → Next.js (`portArg: "--port"`, `readyLog: "Ready in"`), `vite` → Vite (`portArg: "--port"`), `hono`/`express`/`fastify`/`@nestjs/core` → API server (propose `health: "/healthz"` or `/health`).
+   - `start`/`dev` from the `scripts` block (e.g. `pnpm exec next dev`, `pnpm exec tsx server.ts`).
+   - Propose `cwd`, `start`, `port`, and `env` overrides (e.g. an API base URL the web app needs). Pick a `browserApp` (the user-facing one).
+4. **Confirm the apps.** Present the inferred `verify.apps` array. For each unclear field, ask with `AskUserQuestion` (one decision per prompt): which apps to start, their ports, start commands, which app is the browser base URL. Let the user drop apps that shouldn't run during verify.
+5. **Verify mode.** `AskUserQuestion`: `worktree` (default — start apps from the isolated worktree on the config ports; main repo untouched) vs `checkout` (check out the feature branch in the main repo, run there, then restore — requires a clean working tree).
+6. **Project rules.** List `.claude/rules/*.md`. `AskUserQuestion` (multiSelect) which to inject into the dev agent's prompt as `projectRules` (or none).
+7. **Cron schedules.** `AskUserQuestion` for `cron.run` (default `7 * * * *`) and `cron.verify` (default `*/10 * * * *`). Offer the defaults as the first option.
+8. **Write the config.** Build the payload and persist it through the CLI (validates the schema):
+   ```bash
+   cat > /tmp/at-config.json <<'EOF'
+   { ...assembled config... }
+   EOF
+   node scripts/auto-tasks/index.js config --set /tmp/at-config.json
+   rm /tmp/at-config.json
+   ```
+   Print the saved path. On a validation error, surface it and re-ask the offending field.
+9. **Start the process (install crons).** `AskUserQuestion` `[install crons / skip]`. On `install crons`, for each schedule whose id-file does not already exist:
+   - `CronCreate` with `cron: <config.cron.run>`, `prompt: "/auto-tasks run"`, `recurring: true`, `durable: false` → save id to `tasks/.cron-id`.
+   - `CronCreate` with `cron: <config.cron.verify>`, `prompt: "/auto-tasks verify"`, `recurring: true`, `durable: false` → save id to `tasks/.cron-id-verify`.
+   Print both cron ids (or "already installed"). To remove crons later, use `CronList`/`CronDelete` manually with the saved ids.
 
 ### Subcommand: `new` (no arguments)
 
@@ -98,7 +127,7 @@ For each id in `$ARGUMENTS`:
 
 This is the main autonomous loop. It must be fully non-interactive (cron runs with no user).
 
-1. Record start time.
+1. Record start time. Load config: `node scripts/auto-tasks/index.js config` → parse `install`, `test`, `worktree.{root,branchPrefix}`, `projectRules`, `reviewerAgent`.
 2. Bash: `node scripts/auto-tasks/index.js list --status for_dev`. Parse `tasks[]`.
 3. If empty: write a log entry and exit.
    ```bash
@@ -108,14 +137,14 @@ This is the main autonomous loop. It must be fully non-interactive (cron runs wi
    Output: `No tasks in for_dev. Nothing to do.`.
 4. For each task, derive a slug from its filename (the CLI `list` output includes `id`; to get the full filename or slug, you can `ls tasks/inbox/` and match the id prefix). Claim sequentially — atomic rename guarantees no double-claim even if cron + manual overlap:
    ```bash
-   node scripts/auto-tasks/index.js claim --id <id> --worktree ".claude/worktrees/<slug>" --branch "feature/<slug>"
+   node scripts/auto-tasks/index.js claim --id <id> --worktree "<config.worktree.root>/<slug>" --branch "<config.worktree.branchPrefix><slug>"
    ```
    Parse `{claimed, task}`. Collect successful claims into `claimedTasks`.
 5. For each claimed task, create its worktree. Reuse the existing `/worktree` logic inline (do NOT call the slash command recursively):
    ```bash
-   git worktree add -b feature/<slug> .claude/worktrees/<slug> HEAD
-   cd .claude/worktrees/<slug>
-   pnpm install
+   git worktree add -b <config.worktree.branchPrefix><slug> <config.worktree.root>/<slug> HEAD
+   cd <config.worktree.root>/<slug>
+   <config.install>
    cd -
    ```
    The worktree starts from the main repo's current HEAD (whatever branch is checked out at claim time). Uncommitted changes in the main repo are not copied — if needed in the worktree, commit them in main first.
@@ -126,12 +155,12 @@ This is the main autonomous loop. It must be fully non-interactive (cron runs wi
    - `subagent_type`: value of `frontmatter.agent` if present, else `general-purpose`
    - `description`: the task title
    - `prompt`: embed the full task markdown (frontmatter + body), the absolute worktree path, and these instructions:
-     > You are working in an isolated git worktree. Do all file edits inside `<absolute worktree path>`. Follow the project's TDD rule (`superpowers:test-driven-development`), the portability rule (no `node:fs`, `process.env` in Hono handlers — see `.claude/rules/portability-check.md`), and the composite-PK rule for any new DB tables (see `.claude/rules/composite-pk.md`). When done: (1) run `pnpm test` and ensure all affected tests pass, (2) write `<worktree>/TASK-REPORT.md` with sections "Summary", "Changed files", "How to verify", (3) `git add` and `git commit` inside the worktree (committing IS permitted inside the isolated worktree — the "no-commit" rule applies to the main repo, not to worktree branches). Return a JSON summary `{"success": true|false, "changed_files": [...], "error": "..."}`.
+     > You are working in an isolated git worktree. Do all file edits inside `<absolute worktree path>`. Follow the project's TDD rule (`superpowers:test-driven-development`). [If `config.projectRules` is non-empty, append: "Read and follow each of these project rules: `<comma-separated config.projectRules paths>`." — omit this sentence entirely when the list is empty.] When done: (1) run `<config.test>` and ensure all affected tests pass, (2) write `<worktree>/TASK-REPORT.md` with sections "Summary", "Changed files", "How to verify", (3) `git add` and `git commit` inside the worktree (committing IS permitted inside the isolated worktree — the "no-commit" rule applies to the main repo, not to worktree branches). Return a JSON summary `{"success": true|false, "changed_files": [...], "error": "..."}`.
 7. When subagents return, per task:
    - If `success: false` → Bash: `node scripts/auto-tasks/index.js fail --id <id> --error "<error>"`. Do NOT remove the worktree. Continue.
    - If `success: true` → proceed to review loop.
 8. **Review loop (max 3 cycles per task):**
-   - Spawn `Agent` with `subagent_type: elite-code-reviewer`, `model: "opus"`. Prompt: review `<changed_files>` in `<worktree>` against the task's acceptance criteria. Return `{"score": <int 1-10>, "required_changes": [...], "notes": "..."}`.
+   - Spawn `Agent` with `subagent_type: <config.reviewerAgent>`, `model: "opus"`. Prompt: review `<changed_files>` in `<worktree>` against the task's acceptance criteria. Return `{"score": <int 1-10>, "required_changes": [...], "notes": "..."}`.
    - If `score >= 7`: exit loop with the score.
    - Else: spawn another `Agent` (same subagent_type as the implementation agent) with the `required_changes` as instructions, cd'd into the worktree. When it returns, re-review.
    - After 3 failed cycles, Bash: `node scripts/auto-tasks/index.js fail --id <id> --error "review score stuck at <score> after 3 attempts"`. Continue.
@@ -149,18 +178,16 @@ This is the main autonomous loop. It must be fully non-interactive (cron runs wi
 
 This is the verification autonomous loop — runs every 10 min via cron. Fully non-interactive, idempotent, single-threaded.
 
-Apps run on the host (not Docker). Verification starts `apps/api` and `apps/web` directly from the task's worktree on ephemeral ports `:4101` / `:4100`, so the user's own dev server on `:3001`/`:3000` is never touched and no `git checkout` in the main repo is needed.
+Apps run on the host (not Docker). The apps to start, their ports, start commands, and the verify mode all come from `config.verify` (`node scripts/auto-tasks/index.js config`). In `worktree` mode the apps start from the task's worktree on the config ports, so the main repo is never touched; in `checkout` mode the feature branch is checked out into the main repo (requires a clean tree) and restored afterwards.
 
-1. **Acquire process lock.** Create `.claude/verify.lock` with `O_EXCL`, writing own PID. On `EEXIST`: read PID from lock; if the process is dead → remove stale lock and retry create once; if still fails or the process is alive → log `{"trigger":"verify","skipped":"lock busy"}` via `log-run` and exit. Register a `try/finally` so the lock is always removed before exit, regardless of the code path below.
+1. **Acquire process lock + load config.** Create `.claude/verify.lock` with `O_EXCL`, writing own PID. On `EEXIST`: read PID from lock; if the process is dead → remove stale lock and retry create once; if still fails or the process is alive → log `{"trigger":"verify","skipped":"lock busy"}` via `log-run` and exit. Register a `try/finally` so the lock is always removed before exit, regardless of the code path below. Then load config and parse `verify.{enabled,mode,envFile,apps,browserApp}` and `packageManager`. If `verify.enabled` is false or `verify.apps` is empty → `log-run` `{"trigger":"verify","skipped":"verify disabled in config"}`, release the lock, and exit.
 
-2. **Crash recovery.** Run `node scripts/auto-tasks/index.js list --status verifying`. Under the lock, any task in `verifying` state belongs to a crashed prior run. For each: kill stale processes from both PID files (see step 3), then build payload `{"acs":[],"notes":"previous verify run crashed — auto-recovered"}`, write to `/tmp/at-verify-recover.json`, run:
+2. **Crash recovery.** Run `node scripts/auto-tasks/index.js list --status verifying`. Under the lock, any task in `verifying` state belongs to a crashed prior run. For each: kill stale processes from all `.claude/verify-*.pid` files (see step 3), then build payload `{"acs":[],"notes":"previous verify run crashed — auto-recovered"}`, write to `/tmp/at-verify-recover.json`, run:
    ```bash
    node scripts/auto-tasks/index.js verify-complete --id <id> --json /tmp/at-verify-recover.json
    ```
 
-3. **Stale server cleanup.** Handle both PID files after crash recovery:
-   - `.claude/verify-api.pid` — if process is dead → remove file. If alive and no task is in `verifying` → `kill -9 <pid>` and remove file.
-   - `.claude/verify-vite.pid` — same logic.
+3. **Stale server cleanup.** For each `.claude/verify-*.pid` file (one per app in `config.verify.apps`, named `verify-<app.name>.pid`): if the process is dead → remove the file; if alive and no task is in `verifying` → `kill -9 <pid>` and remove the file.
 
 4. **DevTools MCP availability pre-flight.** Verify the `chrome-devtools` MCP tools are reachable (call `mcp__plugin_chrome-devtools-mcp_chrome-devtools__list_pages` and catch errors). If unreachable:
    - Pick the first `awaiting_verification` task (same FIFO order as step 5). `verify-claim` it, then `verify-complete` with payload `{"acs":[],"notes":"DevTools MCP unavailable at verify time"}`. `log-run` with `skipped:"mcp unavailable"` and exit.
@@ -173,46 +200,29 @@ Apps run on the host (not Docker). Verification starts `apps/api` and `apps/web`
    ```
    Parse `{claimed, task}`. If `claimed:false` (race lost — shouldn't happen under lock), exit.
 
-7. **Resolve paths.**
+7. **Resolve the run location (`BASE`) from `verify.mode`.**
    ```bash
    REPO_ROOT=$(git rev-parse --show-toplevel)
    WORKTREE="<absolute path — task.frontmatter.worktree, prepend REPO_ROOT if relative>"
    ```
    If `WORKTREE` is not set or the directory does not exist: `verify-complete` with `{"acs":[],"notes":"worktree missing at verify time"}`, cleanup, exit.
+   - **`worktree` mode (default):** `BASE="$WORKTREE"`. The main repo is never touched.
+   - **`checkout` mode:** require a clean main tree — if `git -C "$REPO_ROOT" status --porcelain` is non-empty → `verify-complete` `{"acs":[],"notes":"working tree dirty; cannot checkout for verify"}`, cleanup, exit. Otherwise record `ORIG_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)`, run `git -C "$REPO_ROOT" checkout "<task.frontmatter.branch>"`, and set `BASE="$REPO_ROOT"`. **Register `git -C "$REPO_ROOT" checkout "$ORIG_BRANCH"` in the step-12 cleanup `finally` so the branch is always restored.**
 
-8. **Start API from worktree on :4101.** Uses `tsx` (no build step needed) with the main repo's `.env` as base config. `API_PORT=4101` is set before `dotenv` so it takes precedence.
+8. **Start each app in `config.verify.apps` (in order).** For an app `{name, cwd, start, port, portEnv?, portArg?, env?, health?, readyLog?}`:
+   - Build the env prefix: each `KEY=VALUE` from `app.env`, plus `<app.portEnv>=<app.port>` if `portEnv` is set. Build the command: `app.start` (append ` <app.portArg> <app.port>` if `portArg` is set). If `config.verify.envFile` exists, wrap the command with the package manager's dotenv runner against the main repo's env file (e.g. `<packageManager> exec dotenv -e "$REPO_ROOT/<envFile>" -- <command>`). All port/env overrides are set **before** dotenv so they take precedence.
    ```bash
-   (cd "$WORKTREE/apps/api" && \
-     nohup API_PORT=4101 pnpm exec dotenv -e "$REPO_ROOT/.env" -- \
-       pnpm exec tsx server.ts > /tmp/verify-api.log 2>&1 &)
-   echo $! > .claude/verify-api.pid
+   (cd "$BASE/<app.cwd>" && \
+     nohup <env prefix> <wrapped command> > /tmp/verify-<app.name>.log 2>&1 &)
+   echo $! > .claude/verify-<app.name>.pid
    ```
-   Poll `http://localhost:4101/healthz` every 1s up to 30s. On timeout: `verify-complete` with `{"acs":[],"notes":"API startup timeout on :4101"}`, cleanup, exit.
+   - **Readiness:** if `app.health` is set → poll `http://localhost:<app.port><app.health>` every 1s up to 30s. Else if `app.readyLog` is set → wait up to 60s for that string to appear in `/tmp/verify-<app.name>.log`. Else → poll `http://localhost:<app.port>/` with `curl -fsS -o /dev/null` up to 60s. On timeout: `verify-complete` `{"acs":[],"notes":"<app.name> startup timeout on :<port>"}`, cleanup, exit.
 
-9. **Start Next.js from worktree on :4100.** `NEXT_PUBLIC_API_URL` and `API_URL` overrides point the web app to the worktree's API instance. Both are set before `dotenv` so they take precedence over any values in `.env`.
-   ```bash
-   (cd "$WORKTREE/apps/web" && \
-     nohup NEXT_PUBLIC_API_URL=http://localhost:4101 API_URL=http://localhost:4101 \
-       pnpm exec dotenv -e "$REPO_ROOT/.env" -- \
-       pnpm exec next dev --port 4100 > /tmp/verify-next.log 2>&1 &)
-   echo $! > .claude/verify-vite.pid
-   ```
+9. **Pre-warm the browser app.** Let `BROWSER_PORT` be the `port` of the app whose `name` equals `config.verify.browserApp` (fallback: the first app). `curl -fsS -o /dev/null "http://localhost:$BROWSER_PORT/" || true`, then `sleep 2`.
 
-10. **Wait for Next.js readiness.** Poll `http://localhost:4100` with `curl -fsS -o /dev/null` every 1s up to 60s. On timeout: `verify-complete` with `{"acs":[],"notes":"Next.js startup timeout on :4100"}`, cleanup, exit.
+10. **Dispatch a verification subagent** with `model: "opus"`, `subagent_type: "general-purpose"`. Prompt template:
 
-11. **Wait for initial compilation, then pre-warm.**
-    ```bash
-    for i in $(seq 1 60); do
-      grep -q "Ready in" /tmp/verify-next.log 2>/dev/null && break
-      sleep 1
-    done
-    curl -fsS -o /dev/null "http://localhost:4100/" || true
-    sleep 2
-    ```
-
-12. **Dispatch a verification subagent** with `model: "opus"`, `subagent_type: "general-purpose"`. Prompt template:
-
-    > You are a verification agent. The application is running at `http://localhost:4100` (Next.js) backed by the API at `http://localhost:4101` (Hono). Navigate to `http://localhost:4100<task.frontmatter.test_url>` and execute the Repro Steps below. For each Acceptance Criterion, determine if it is met using chrome-devtools MCP tools (navigate_page, take_screenshot, take_snapshot, click, fill, list_console_messages, etc.).
+    > You are a verification agent. The application is running at `http://localhost:<BROWSER_PORT>` (the other apps in the config are reachable on their own ports). Navigate to `http://localhost:<BROWSER_PORT><task.frontmatter.test_url>` and execute the Repro Steps below. For each Acceptance Criterion, determine if it is met using chrome-devtools MCP tools (navigate_page, take_screenshot, take_snapshot, click, fill, list_console_messages, etc.).
     >
     > Task:
     > `<full markdown body: Context, Acceptance Criteria, Repro Steps, References>`
@@ -224,7 +234,7 @@ Apps run on the host (not Docker). Verification starts `apps/api` and `apps/web`
 
     Hard timeout: 8 minutes.
 
-13. **Handle subagent result.**
+11. **Handle subagent result.**
     - If the agent response is not valid JSON or it timed out: build payload `{"acs":[],"notes":"agent error: <brief msg>"}`.
     - Otherwise: use the agent's payload directly.
     - Write the payload to `/tmp/at-verify-result.json` and run:
@@ -234,12 +244,12 @@ Apps run on the host (not Docker). Verification starts `apps/api` and `apps/web`
       ```
     - On `not_verified`, the CLI automatically writes a `## Verification Report` section into the task body (inserted right after `## Acceptance Criteria`), including per-AC pass/fail with the agent's `evidence`, `notes`, timestamp, and status. The section is overwritten on each re-verify. On `verified`, any prior report is stripped before the task moves to `archive/`.
 
-14. **Cleanup (always, in `try/finally` around steps 6–13).** Stop both servers, then release the lock. Main repo working tree is never touched.
-    - If `.claude/verify-api.pid` exists: `kill $(cat .claude/verify-api.pid) 2>/dev/null || true`, wait 3s, if still alive `kill -9 $(cat .claude/verify-api.pid) 2>/dev/null || true`. `rm -f .claude/verify-api.pid`.
-    - If `.claude/verify-vite.pid` exists: `kill $(cat .claude/verify-vite.pid) 2>/dev/null || true`, wait 5s, if still alive `kill -9 $(cat .claude/verify-vite.pid) 2>/dev/null || true`. `rm -f .claude/verify-vite.pid`.
+12. **Cleanup (always, in `try/finally` around steps 6–11).** Stop every app, restore the branch if needed, then release the lock.
+    - For each app in `config.verify.apps`, if `.claude/verify-<app.name>.pid` exists: `kill $(cat .claude/verify-<app.name>.pid) 2>/dev/null || true`, wait ~3s, if still alive `kill -9 ... 2>/dev/null || true`, then `rm -f` the pid file.
+    - **`checkout` mode only:** `git -C "$REPO_ROOT" checkout "$ORIG_BRANCH"` to restore the original branch.
     - `rm -f .claude/verify.lock`.
 
-15. **Log run.**
+13. **Log run.**
     ```bash
     echo '{"trigger":"verify","picked":<N>,"verified":<X>,"not_verified":<Y>,"duration_ms":<ms>}' > /tmp/at-log.json
     node scripts/auto-tasks/index.js log-run --json /tmp/at-log.json
@@ -303,29 +313,6 @@ Safety guards:
 - Never deletes feature branches.
 - `--require-status commited,committed` on the CLI `delete` prevents deletion if another process flipped the status between list and delete.
 - Does not write a run-log entry (this is a manual maintenance command, not part of the autonomous loop).
-
-### Subcommand: `install-cron`
-
-1. If `tasks/.cron-id` does NOT exist:
-   - Use `CronCreate` with:
-     - `cron: "7 * * * *"` (hourly :07)
-     - `prompt: "/auto-tasks run"`
-     - `recurring: true`, `durable: false`
-   - Save the returned id to `tasks/.cron-id`.
-2. If `tasks/.cron-id-verify` does NOT exist:
-   - Use `CronCreate` with:
-     - `cron: "*/10 * * * *"` (every 10 min)
-     - `prompt: "/auto-tasks verify"`
-     - `recurring: true`, `durable: false`
-   - Save the returned id to `tasks/.cron-id-verify`.
-3. Print both cron ids and their schedules. If either already existed, note "already installed".
-
-### Subcommand: `uninstall-cron`
-
-1. If `tasks/.cron-id` exists → `CronDelete` the saved id; `rm tasks/.cron-id`.
-2. If `tasks/.cron-id-verify` exists → `CronDelete` the saved id; `rm tasks/.cron-id-verify`.
-3. If neither file existed before the call, print "no crons installed".
-4. Print confirmation listing which crons were removed.
 
 ### Subcommand: `plane`
 
