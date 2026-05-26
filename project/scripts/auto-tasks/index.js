@@ -10,6 +10,7 @@ const { slugify, serializeTaskFile } = require('./lib/frontmatter');
 const { appendRunLog } = require('./lib/runLog');
 const { groupCandidates, detectModule } = require('./lib/grouping');
 const { markACs, writeVerificationReport, stripVerificationReport } = require('./lib/acUpdater');
+const { loadConfig, writeConfig } = require('./lib/config');
 
 // ---- arg parsing ----
 function parseArgs(argv) {
@@ -335,6 +336,17 @@ async function cmdFindRelated(args) {
   print({ matches });
 }
 
+async function cmdConfig(args) {
+  const tasksDir = tasksRoot(args);
+  if (args.set) {
+    const payload = JSON.parse(await fs.readFile(args.set, 'utf8'));
+    const file = await writeConfig(tasksDir, payload);
+    print({ ok: true, path: file });
+    return;
+  }
+  print(await loadConfig(tasksDir));
+}
+
 async function cmdLogRun(args) {
   if (!args.json) throw new Error('--json required');
   const entry = JSON.parse(await fs.readFile(args.json, 'utf8'));
@@ -362,6 +374,7 @@ const commands = {
   'append-criterion': cmdAppendCriterion,
   'group-candidates': cmdGroupCandidates,
   'find-related': cmdFindRelated,
+  'config': cmdConfig,
   'log-run': cmdLogRun,
   'help': () => console.log('Subcommands: ' + Object.keys(commands).join(', ')),
 };

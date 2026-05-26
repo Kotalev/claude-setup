@@ -28,6 +28,24 @@ test('CLI next-id — returns 001 in empty tasks dir', () => {
   assert.equal(out.id, '2026-04-17-001');
 });
 
+test('CLI config — prints defaults when no config file', () => {
+  const out = run(['config']);
+  assert.equal(out.packageManager, 'npm');
+  assert.equal(out.verify.mode, 'worktree');
+});
+
+test('CLI config --set — writes then reads back', async () => {
+  const payload = { packageManager: 'pnpm', verify: { apps: [{ name: 'web', cwd: 'apps/web', start: 'pnpm dev', port: 4100 }] } };
+  const p = path.join(tmp, 'cfg.json');
+  await fs.writeFile(p, JSON.stringify(payload));
+  const set = run(['config', '--set', p]);
+  assert.equal(set.ok, true);
+  const read = run(['config']);
+  assert.equal(read.packageManager, 'pnpm');
+  assert.equal(read.verify.apps[0].name, 'web');
+  assert.equal(read.install, 'pnpm install');
+});
+
 test('CLI create — writes a new task in inbox/', async () => {
   const payload = { title: 'Fix foo', body: '## Context\nbody\n' };
   const payloadPath = path.join(tmp, 'payload.json');
