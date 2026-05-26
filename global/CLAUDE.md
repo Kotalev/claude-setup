@@ -2,9 +2,10 @@
 
 - Communicate in Bulgarian. Code, commits, and variable names stay in English.
 - Always use `model: "opus"` for all Agent/subagent invocations. No exceptions.
+- Never use destructive git commands (stash, push, reset --hard, checkout ., restore, clean) without explicit permission.
 - Concise responses — no trailing summaries of what was just done.
 - Verify visual/UI changes in browser before claiming done.
-- Ask before assuming when requirements are ambiguous.
+- Ask before assuming when requirements are ambiguous — use AskUserQuestion.
 
 # Rules of coding
 
@@ -67,3 +68,6 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 5. General
+- Before editing any file, read it first. Before modifying a function, grep for all callers. Research before you edit.
